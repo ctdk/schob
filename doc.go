@@ -17,7 +17,7 @@
 /*
 Schob is a client for "shovey", a mechanism for pushing jobs to client nodes. Currently it's specific to goiardi, but a more general implementation is planned.
 
-At the moment, it's not ready for real use. It's still deep in testing. It's ready to be played with now, though. To run shovey currently you will need:
+At the moment, it's not ready for real use. It's still deep in testing. It's ready to be played with now, though. To run shovey currently you will need to:
 
 1. Checkout the "serfing" branch from goiardi
 2. Create an RSA keypair for signing shovey requests
