@@ -161,7 +161,7 @@ func parseConfig() (*conf, error) {
 	}
 
 	if config.KeyFileName == "" {
-		err = fmt.Errorf("no private key file for node client given!")
+		err = fmt.Errorf("no private key file for node client given")
 		return nil, err
 	}
 

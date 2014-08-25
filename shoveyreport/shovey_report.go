@@ -63,6 +63,7 @@ func New(node, runID string, chefClient *chef.Client) (*Report, error) {
 	return r, nil
 }
 
+// SendReport sends a report on this shovey run back to the goiardi server.
 func (r *Report) SendReport() error {
 	jsonReport, err := json.Marshal(r)
 	if err != nil {
