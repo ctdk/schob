@@ -29,6 +29,8 @@ At the moment, it's not ready for real use. It's still deep in testing. It's rea
 8. Note where the testing whitelist file is (probably somewhere like ~/go/src/github.com/ctdk/schob/test/whitelist.json).
 9. Run schob like so: `schob -VVVV -e http://chef-server.local:4545 -n node-name.local -k /path/to/node.key -w /path/to/schob/test/whitelist.json -p /path/to/public.key --serf-addr=127.0.0.1:7373`
 
+Run schob with `-h` to see all current options.
+
 schob is coming together, but it's not done yet. Better docs and cookbooks for setting it up will come once it stabilizes a bit more. Tests aren't there yet either, since the goiardi and schob halves of shovey lean on each other so much. It's definitely on my mind though.
 */
 
