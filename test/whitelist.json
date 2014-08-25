@@ -1,0 +1,7 @@
+{
+  "whitelist": {
+     "ls": "ls /",
+     "ls3": "ls",
+     "sleepy": "sleep 200"
+   }
+}
