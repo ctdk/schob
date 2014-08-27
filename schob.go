@@ -254,7 +254,6 @@ func main() {
 								delete(cmdRun, payload["run_id"])
 								qm.removeJob(payload["run_id"])
 							}
-							close(cerrCh)
 							close(cmdKill[payload["run_id"]])
 							delete(cmdKill, payload["run_id"])
 						case <-time.After(time.Duration(120) * time.Second):
@@ -262,7 +261,6 @@ func main() {
 							if err != nil {
 								logger.Errorf(err.Error())
 							} else {
-								close(cerrCh)
 								close(cmdKill[payload["run_id"]])
 								delete(cmdKill, payload["run_id"])
 								qm.removeJob(payload["run_id"])
