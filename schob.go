@@ -408,7 +408,7 @@ func handleSignals(qm *queueManage) {
 			}()
 			for {
 				if qm.numberOfJobs() != 0 {
-					logger.Infof("Waiting for %d jobs to finish before shutting down...", qm.numberOfJobs)
+					logger.Infof("Waiting for %d jobs to finish before shutting down...", qm.numberOfJobs())
 					time.Sleep(time.Duration(5) * time.Second)
 				} else {
 					logger.Infof("No jobs remaining")
