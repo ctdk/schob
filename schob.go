@@ -22,24 +22,36 @@ import (
 	"crypto/rsa"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"github.com/ctdk/goas/v2/logger"
 	"github.com/ctdk/schob/shoveyreport"
 	"github.com/go-chef/chef"
 	serfclient "github.com/hashicorp/serf/client"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 var serfer *serfclient.RPCClient
+
+type queueManage struct {
+	shuttingDown bool
+	jobsRunning map[string]bool
+	saveFile string
+	sync.RWMutex
+}
 
 func main() {
 	config, err := parseConfig()
@@ -65,6 +77,16 @@ func main() {
 		logger.Criticalf(err.Error())
 		os.Exit(1)
 	}
+
+	// set up signal handlers
+	qm := new(queueManage)
+	err = qm.checkOldJobs(config.QueueSaveFile, config, chefClient)
+	if err != nil {
+		logger.Errorf(err.Error())
+		os.Exit(1)
+	}
+
+	handleSignals(qm)
 
 	// start the heartbeat messages
 	go heartbeat(config.ClientName)
@@ -134,11 +156,22 @@ func main() {
 
 			switch action {
 			case "start":
+				if err = qm.addJob(payload["run_id"]); err != nil {
+					logger.Errorf(err.Error())
+					report.Status = "shutdown"
+					report.Error = "shovey client was shutting down"
+					err = report.SendReport()
+					if err != nil {
+						logger.Errorf("Error sending report: %s", err.Error())
+					}
+					continue
+				}
 				c, ok := whitelist[payload["command"]]
 				if !ok {
 					log.Println("NACK")
 					report.Status = "nacked"
 					report.Error = fmt.Sprintf("command %s not in whitelist", payload["command"])
+					qm.removeJob(payload["run_id"])
 					err = report.SendReport()
 					if err != nil {
 						logger.Errorf("Error sending report: %s", err.Error())
@@ -193,6 +226,7 @@ func main() {
 						// get rid of the command now?
 						delete(cmdRun, payload["run_id"])
 						logger.Infof("Finished job %s", payload["run_id"])
+						qm.removeJob(payload["run_id"])
 						return
 					case <-cmdKill[payload["run_id"]]:
 						// Probably want to tell the
@@ -218,6 +252,7 @@ func main() {
 							} else {
 								logger.Debugf("cancelling was successful")
 								delete(cmdRun, payload["run_id"])
+								qm.removeJob(payload["run_id"])
 							}
 							close(cerrCh)
 							close(cmdKill[payload["run_id"]])
@@ -230,6 +265,7 @@ func main() {
 								close(cerrCh)
 								close(cmdKill[payload["run_id"]])
 								delete(cmdKill, payload["run_id"])
+								qm.removeJob(payload["run_id"])
 								logger.Debugf("Job %s timed out", payload["run_id"])
 
 							}
@@ -248,6 +284,8 @@ func main() {
 						err := cmd.Process.Kill()
 						if err != nil {
 							logger.Errorf(err.Error())
+						} else {
+							qm.removeJob(payload["run_id"])
 						}
 					}
 				}()
@@ -336,7 +374,7 @@ func assembleReqBlock(payload map[string]string) string {
 	sort.Strings(pkeys)
 	parr := make([]string, len(pkeys))
 	for i, k := range pkeys {
-		parr[i] = payload[k]
+		parr[i] = fmt.Sprintf("%s: %s", k, payload[k])
 	}
 	payloadBlock := strings.Join(parr, "\n")
 	return payloadBlock
@@ -349,4 +387,133 @@ func verifyRequest(signature, reqBlock string, pubKey *rsa.PublicKey) error {
 	}
 	sigSha := sha1.Sum([]byte(reqBlock))
 	return rsa.VerifyPKCS1v15(pubKey, crypto.SHA1, sigSha[:], sig)
+}
+
+func handleSignals(qm *queueManage) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func(qm *queueManage){
+		for sig := range c {
+			logger.Debugf("Received signal %s", sig)
+			qm.setShutDown()
+			sd := make(chan struct{}, 1)
+			go func(){
+				select {
+				case <-sd:
+					os.Exit(0)
+				case <-time.After(time.Duration(120) * time.Second):
+					logger.Errorf("Not all jobs ended before exiting")
+					os.Exit(1)
+				}
+			}()
+			for {
+				if qm.numberOfJobs() != 0 {
+					logger.Infof("Waiting for %d jobs to finish before shutting down...", qm.numberOfJobs)
+					time.Sleep(time.Duration(5) * time.Second)
+				} else {
+					logger.Infof("No jobs remaining")
+					sd <- struct{}{}
+					break
+				}
+			}
+		}
+	}(qm)
+}
+
+func (q *queueManage) setShutDown() {
+	q.Lock()
+	defer q.Unlock()
+	q.shuttingDown = true
+}
+
+func (q *queueManage) addJob(jobID string) error {
+	q.Lock()
+	defer q.Unlock()
+	if q.shuttingDown {
+		return fmt.Errorf("shutting down, not accepting new jobs")
+	}
+	if q.jobsRunning == nil {
+		q.jobsRunning = make(map[string]bool)
+	}
+	q.jobsRunning[jobID] = true
+	return q.saveStatus()
+}
+
+func (q *queueManage) removeJob(jobID string) error {
+	q.Lock()
+	defer q.Unlock()
+	delete(q.jobsRunning, jobID)
+	return q.saveStatus()
+}
+
+func (q *queueManage) numberOfJobs() int {
+	q.RLock()
+	defer q.RUnlock()
+	i := len(q.jobsRunning)
+	return i
+}
+
+func (q *queueManage) saveStatus() error {
+	if q.saveFile == "" {
+		return nil
+	}
+	fp, err := ioutil.TempFile(path.Dir(q.saveFile), "qstat")
+	if err != nil {
+		return err
+	}
+	enc := gob.NewEncoder(fp)
+	err = enc.Encode(q.jobsRunning)
+	if err != nil {
+		fp.Close()
+		return err
+	}
+	err = fp.Close()
+	if err != nil {
+		return err
+	}
+	return os.Rename(fp.Name(), q.saveFile)
+}
+
+func (q *queueManage) checkOldJobs(saveFile string, config *conf, chefClient *chef.Client) error {
+	if saveFile == "" {
+		// we decided not to keep track of possibly orphaned jobs
+		return nil
+	}
+	q.Lock()
+	q.saveFile = saveFile
+	q.Unlock()
+	fp, err := os.Open(q.saveFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	dec := gob.NewDecoder(fp)
+	mj := make(map[string]bool)
+	err = dec.Decode(&mj)
+	if err != nil {
+		fp.Close()
+		return err
+	}
+	err = fp.Close()
+	if err != nil {
+		return err
+	}
+	
+	if len(mj) != 0 {
+		logger.Debugf("Found what appear to be %d jobs that weren't able to finish the last time schob was running", len(mj))
+		for k := range mj {
+			report, err := shoveyreport.New(config.ClientName, k, chefClient)
+			if err != nil {
+				return err
+			}
+			report.Status = "killed"
+			report.Error = fmt.Sprintf("job %s on node %s seems to have been killed abruptly by schob not having a chance to shut down in an orderly fashion", k, config.ClientName)
+			report.SendReport()
+		}
+	} else {
+		logger.Debugf("No leftover jobs from before")
+	}
+	return nil
 }

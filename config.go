@@ -46,6 +46,7 @@ type conf struct {
 	SigningPubKey string `toml:"sign-pub-key"`
 	SerfAddr      string `toml:"serf-addr"`
 	PubKey        *rsa.PublicKey
+	QueueSaveFile string `toml:"queue-save-file"`
 }
 
 type options struct {
@@ -61,6 +62,7 @@ type options struct {
 	RunTimeout    int    `short:"t" long:"run-timeout" description:"The time, in minutes, to wait before stopping a job. Separate from the timeout set from the server, this is a fallback. Defaults to 45 minutes."`
 	SigningPubKey string `short:"p" long:"sign-pub-key" description:"Path to public key used to verify signed requests from the server."`
 	SerfAddr      string `long:"serf-addr" description:"IP anddress and port to use for RPC communication with the serf agent. Defaults to 127.0.0.1:7373."`
+	QueueSaveFile string `short:"q" long:"queue-save-file" description:"File to save running job status to recover jobs that didn't finish if schob is suddenly shut down without a chance to clean up."`
 }
 
 var logLevelNames = map[string]int{"debug": 4, "info": 3, "warning": 2, "error": 1, "critical": 0}
@@ -158,6 +160,10 @@ func parseConfig() (*conf, error) {
 	}
 	if config.RunTimeout == 0 {
 		config.RunTimeout = 45
+	}
+
+	if opts.QueueSaveFile != "" {
+		config.QueueSaveFile = opts.QueueSaveFile
 	}
 
 	if config.KeyFileName == "" {
