@@ -213,13 +213,13 @@ func main() {
 						delete(cmdKill, payload["run_id"])
 						if cerr != nil {
 							report.Error = cmd.ProcessState.String()
-							report.ErrMsg = stderr.String()
+							report.Stderr = stderr.String()
 							sysInfo := cmd.ProcessState.Sys().(syscall.WaitStatus)
 							report.ExitStatus = uint8(sysInfo.ExitStatus())
 							report.Status = "failed"
 						} else {
 							report.Output = out.String()
-							report.ErrMsg = stderr.String()
+							report.Stderr = stderr.String()
 							report.Status = "completed"
 						}
 						report.SendReport()

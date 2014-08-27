@@ -32,7 +32,7 @@ type Report struct {
 	Node          string `json:"node"`
 	RunID         string `json:"run_id"`
 	Status        string `json:"status"`
-	ErrMsg        string `json:"err_msg"`
+	Stderr        string `json:"stderr"`
 	ExitStatus    uint8  `json:"exit_status"`
 	Error         string `json:"error"`
 	Output        string `json:"output"`
