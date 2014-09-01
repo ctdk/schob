@@ -112,7 +112,7 @@ func main() {
 	cmdRun := make(map[string]*exec.Cmd)
 
 	for e := range streamCh {
-		//log.Printf("Got an event: %v", e)
+		log.Printf("Got an event: %v", e)
 		eName, _ := e["Name"]
 		switch eName {
 		case "shovey":
@@ -202,8 +202,8 @@ func main() {
 				cmdKill[payload["run_id"]] = make(chan struct{}, 1)
 				cmdRun[payload["run_id"]] = cmd
 
-				outch := make(chan struct{}, 1)
-				errch := make(chan struct{}, 1)
+				outch := make(chan struct{})
+				errch := make(chan struct{})
 				waitch := make(chan struct{}, 2)
 
 				stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
@@ -225,7 +225,7 @@ func main() {
 				go readOut(stderr, stderrReport, runTimeout, waitch, errch)
 
 				go func() {
-					cerrCh := make(chan error, 1)
+					cerrCh := make(chan error) //, 1)
 					go func() {
 						cerrCh <- cmd.Wait()
 					}()
@@ -250,7 +250,7 @@ func main() {
 						delete(cmdRun, payload["run_id"])
 						logger.Infof("Finished job %s", payload["run_id"])
 						qm.removeJob(payload["run_id"])
-						return
+						logger.Infof("removed job from queue manager")
 					case <-cmdKill[payload["run_id"]]:
 						// Probably want to tell the
 						// server what happened here
@@ -316,7 +316,7 @@ func main() {
 				<- errch
 			case "cancel":
 				if p, ok := cmdKill[payload["run_id"]]; ok {
-					logger.Debugf("Sending noticd to kill job %s", payload["run_id"])
+					logger.Debugf("Sending notice to kill job %s", payload["run_id"])
 					p <- struct{}{}
 					continue
 				}
@@ -453,7 +453,7 @@ func (q *queueManage) setShutDown() {
 
 func (q *queueManage) addJob(jobID string) error {
 	q.Lock()
-	defer q.Unlock()
+	q.Unlock()
 	if q.shuttingDown {
 		return fmt.Errorf("shutting down, not accepting new jobs")
 	}
@@ -462,6 +462,7 @@ func (q *queueManage) addJob(jobID string) error {
 	}
 	q.jobsRunning[jobID] = true
 	return q.saveStatus()
+	
 }
 
 func (q *queueManage) removeJob(jobID string) error {
@@ -557,8 +558,9 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 			}
 			time.Sleep(time.Duration(100) * time.Microsecond)
 		}
+		logger.Debugf("leaving read go func")
 	}()
-	LOOP:
+	Loop:
 	for {
 		select {
 		case <- bufch:
@@ -579,14 +581,14 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
-			break LOOP
+			break Loop
 		case <- time.After(timeout * time.Minute):
 			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
 			err := outputReporter.SendReport(reader.String(), true)
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
-			break LOOP
+			break Loop
 		}
 	}
 	readstop = true

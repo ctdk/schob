@@ -122,6 +122,7 @@ func parseConfig() (*conf, error) {
 		config.DebugLevel = 4
 	}
 	config.DebugLevel = int(logger.LevelCritical) - config.DebugLevel
+	logger.SetLevel(logger.LogLevel(config.DebugLevel))
 	debugLevel := map[int]string{0: "debug", 1: "info", 2: "warning", 3: "error", 4: "critical"}
 	log.Printf("Logging at %s level", debugLevel[config.DebugLevel])
 	if config.SysLog {

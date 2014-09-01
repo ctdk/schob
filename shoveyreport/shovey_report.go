@@ -158,6 +158,8 @@ func (sr *OutputReport) SendReport(output string, isLast bool) error {
 			if err != nil {
 				return err
 			}
+		} else {
+			break
 		}
 		time.Sleep(time.Duration(10) * time.Second)
 	}
