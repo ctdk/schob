@@ -25,11 +25,13 @@ import (
 	"github.com/codeskyblue/go-uuid"
 	"github.com/go-chef/chef"
 	"net/http"
+	"sync"
+	"time"
 )
 
 // Report is the struct that holds all the information to send.
 type Report struct {
-	Node          string `json:"node"`
+	Node          string `json:"node_name"`
 	RunID         string `json:"run_id"`
 	Status        string `json:"status"`
 	Stderr        string `json:"stderr"`
@@ -40,6 +42,19 @@ type Report struct {
 	ProtocolMajor int    `json:"protocol_major"`
 	ProtocolMinor int    `json:"protocol_minor"`
 	chefClient    *chef.Client
+}
+
+type OutputReport struct {
+	Node string `json:"node_name"`
+	RunID string `json:"run_id"`
+	Seq int `json:"seq"`
+	IsLast bool `json:"is_last"`
+	OutputType string `json:"output_type"`
+	Output string `json:"output"`
+	ProtocolMajor int    `json:"protocol_major"`
+	ProtocolMinor int    `json:"protocol_minor"`
+	chefClient *chef.Client
+	sync.Mutex
 }
 
 const shoveyProtoMajorVersion = 0
@@ -81,11 +96,80 @@ func (r *Report) SendReport() error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("Request status was %d: returned %s, and %v in the response", resp.StatusCode, resp.Status, respMap)
+		return err
 	}
 	return nil
 }
 
 func (r *Report) shoveyURL() string {
 	url := fmt.Sprintf("shovey/jobs/%s/%s", r.RunID, r.Node)
+	return url
+}
+
+// NewOutputReport builds a new reporter for streaming output (stdout and 
+// stderr) from a job back to the server.
+func NewOutputReport(node, runID, outputType string, chefClient *chef.Client) (*OutputReport, error) {
+	if runID == "" {
+		err := fmt.Errorf("No runID provided")
+		return nil, err
+	}
+	if node == "" {
+		err := fmt.Errorf("No node name provided")
+		return nil, err
+	}
+	if outputType == "" {
+		err := fmt.Errorf("No output type provided")
+		return nil, err
+	}
+	if u := uuid.Parse(runID); u == nil {
+		err := fmt.Errorf("runID %s did not validate as a UUID", runID)
+		return nil, err
+	}
+	r := &OutputReport{ Node: node, RunID: runID, OutputType: outputType, ProtocolMajor: shoveyProtoMajorVersion, ProtocolMinor: shoveyProtoMinorVersion, Seq: 0, chefClient: chefClient }
+	return r, nil
+}
+
+// SendReport sends updated stream output from a job back to the server.
+func (sr *OutputReport) SendReport(output string, isLast bool) error {
+	sr.Lock()
+	defer sr.Unlock()
+	sr.Output = output
+	sr.IsLast = isLast
+
+	jsonReport, err := json.Marshal(sr)
+	if err != nil {
+		return err
+	}
+	sr.Seq++
+
+	rbody := bytes.NewReader(jsonReport)
+	req, err := sr.chefClient.NewRequest("PUT", sr.streamURL(), rbody)
+	if err != nil {
+		return err
+	}
+	respMap := make(map[string]interface{})
+	resp, err := sr.chefClient.Do(req, &respMap)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < 30; i++ {
+		if resp.StatusCode != http.StatusOK {
+			resp, err = sr.chefClient.Do(req, &respMap)
+			if err != nil {
+				return err
+			}
+		}
+		time.Sleep(time.Duration(10) * time.Second)
+	}
+	// if that still didn't work...
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("Couldn't send stream PUT after 30 tries. Last request status was %d: returned %s, and %v in the response", resp.StatusCode, resp.Status, respMap)
+		return err
+	}
+	return nil
+}
+
+func (sr *OutputReport) streamURL() string {
+	url := fmt.Sprintf("shovey/stream/%s/%s", sr.RunID, sr.Node)
 	return url
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ctdk/schob/shoveyreport"
 	"github.com/go-chef/chef"
 	serfclient "github.com/hashicorp/serf/client"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -111,7 +112,7 @@ func main() {
 	cmdRun := make(map[string]*exec.Cmd)
 
 	for e := range streamCh {
-		log.Printf("Got an event: %v", e)
+		//log.Printf("Got an event: %v", e)
 		eName, _ := e["Name"]
 		switch eName {
 		case "shovey":
@@ -187,10 +188,10 @@ func main() {
 				logger.Debugf("Will execute %s", c)
 				args := cmdArgs(c.(string))
 				cmd := exec.Command(args[0], args[1:]...)
-				var out bytes.Buffer
-				var stderr bytes.Buffer
-				cmd.Stdout = &out
-				cmd.Stderr = &stderr
+				out := new(bytes.Buffer)
+				stderr := new(bytes.Buffer)
+				cmd.Stdout = out
+				cmd.Stderr = stderr
 				cerr := cmd.Start()
 				if cerr != nil {
 					report.Error = cerr.Error()
@@ -200,6 +201,28 @@ func main() {
 				}
 				cmdKill[payload["run_id"]] = make(chan struct{}, 1)
 				cmdRun[payload["run_id"]] = cmd
+
+				outch := make(chan struct{}, 1)
+				errch := make(chan struct{}, 1)
+				waitch := make(chan struct{}, 2)
+
+				stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
+				if err != nil {
+					report.Error = err.Error()
+					report.Status = "bad_fh"
+					report.SendReport()
+					continue
+				}
+				stderrReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stderr", chefClient)
+				if err != nil {
+					report.Error = err.Error()
+					report.Status = "bad_fh"
+					report.SendReport()
+					continue
+				}
+
+				go readOut(out, stdoutReport, runTimeout, waitch, outch)
+				go readOut(stderr, stderrReport, runTimeout, waitch, errch)
 
 				go func() {
 					cerrCh := make(chan error, 1)
@@ -213,13 +236,13 @@ func main() {
 						delete(cmdKill, payload["run_id"])
 						if cerr != nil {
 							report.Error = cmd.ProcessState.String()
-							report.Stderr = stderr.String()
+							//report.Stderr = stderr.String()
 							sysInfo := cmd.ProcessState.Sys().(syscall.WaitStatus)
 							report.ExitStatus = uint8(sysInfo.ExitStatus())
 							report.Status = "failed"
 						} else {
-							report.Output = out.String()
-							report.Stderr = stderr.String()
+							//report.Output = out.String()
+							//report.Stderr = stderr.String()
 							report.Status = "completed"
 						}
 						report.SendReport()
@@ -287,6 +310,10 @@ func main() {
 						}
 					}
 				}()
+				waitch <- struct{}{}
+				waitch <- struct{}{}
+				<- outch
+				<- errch
 			case "cancel":
 				if p, ok := cmdKill[payload["run_id"]]; ok {
 					logger.Debugf("Sending noticd to kill job %s", payload["run_id"])
@@ -514,4 +541,54 @@ func (q *queueManage) checkOldJobs(saveFile string, config *conf, chefClient *ch
 		logger.Debugf("No leftover jobs from before")
 	}
 	return nil
+}
+
+func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, runTimeout time.Duration, stopch, finishch chan struct{}) {
+	bufch := make(chan struct{}, 1)
+	readstop := false
+	// make runTimeout a little longer than the execution timeout
+	t := float64(runTimeout) * 1.1
+	timeout := time.Duration(t)
+	go func() {
+		logger.Debugf("In read go func")
+		for readstop == false {
+			if reader.Len() >= 1024 {
+				bufch <- struct{}{}
+			}
+			time.Sleep(time.Duration(100) * time.Microsecond)
+		}
+	}()
+	LOOP:
+	for {
+		select {
+		case <- bufch:
+			logger.Debugf("reading %s at seq %d", outputReporter.OutputType, outputReporter.Seq)
+			p := make([]byte, 1024)
+			b, e := reader.Read(p)
+			logger.Debugf("Read %d bytes", b)
+			if e != io.EOF {
+				logger.Errorf(e.Error())
+			}
+			err := outputReporter.SendReport(string(p), false)
+			if err != nil {
+				logger.Errorf(err.Error())
+			}
+		case <- stopch:
+			logger.Debugf("%s reading after the end of execution, seq %d", outputReporter.OutputType, outputReporter.Seq)
+			err := outputReporter.SendReport(reader.String(), true)
+			if err != nil {
+				logger.Errorf(err.Error())
+			}
+			break LOOP
+		case <- time.After(timeout * time.Minute):
+			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
+			err := outputReporter.SendReport(reader.String(), true)
+			if err != nil {
+				logger.Errorf(err.Error())
+			}
+			break LOOP
+		}
+	}
+	readstop = true
+	finishch <- struct{}{}
 }
