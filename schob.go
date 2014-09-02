@@ -546,6 +546,8 @@ func (q *queueManage) checkOldJobs(saveFile string, config *conf, chefClient *ch
 
 func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, runTimeout time.Duration, stopch, finishch chan struct{}) {
 	bufch := make(chan struct{}, 1)
+	holdch := make(chan struct{}, 1)
+	holdch <- struct{}{}
 	readstop := false
 	// make runTimeout a little longer than the execution timeout
 	t := float64(runTimeout) * 1.1
@@ -553,8 +555,11 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 	go func() {
 		logger.Debugf("In read go func")
 		for readstop == false {
+			<- holdch 
 			if reader.Len() >= 1024 {
 				bufch <- struct{}{}
+			} else {
+				holdch <- struct{}{}
 			}
 			time.Sleep(time.Duration(100) * time.Microsecond)
 		}
@@ -564,27 +569,35 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 	for {
 		select {
 		case <- bufch:
+			//<- holdch
 			logger.Debugf("reading %s at seq %d", outputReporter.OutputType, outputReporter.Seq)
 			p := make([]byte, 1024)
 			b, e := reader.Read(p)
+			poutput := string(p)
+			holdch <- struct{}{}
 			logger.Debugf("Read %d bytes", b)
 			if e != io.EOF {
 				logger.Errorf(e.Error())
 			}
-			err := outputReporter.SendReport(string(p), false)
+			err := outputReporter.SendReport(poutput, false)
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
 		case <- stopch:
+			<- holdch
 			logger.Debugf("%s reading after the end of execution, seq %d", outputReporter.OutputType, outputReporter.Seq)
-			err := outputReporter.SendReport(reader.String(), true)
+			output := reader.String()
+			holdch <- struct{}{}
+			err := outputReporter.SendReport(output, true)
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
 			break Loop
 		case <- time.After(timeout * time.Minute):
+			<- holdch
 			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
 			err := outputReporter.SendReport(reader.String(), true)
+			holdch <- struct{}{}
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
