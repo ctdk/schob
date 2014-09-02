@@ -136,6 +136,8 @@ func (sr *OutputReport) SendReport(output string, isLast bool) error {
 	sr.Output = output
 	sr.IsLast = isLast
 
+	logger.Debugf("Output to send for %s:\n######\n\n%s\n\n#######", sr.OutputType, sr.Output)
+
 	jsonReport, err := json.Marshal(sr)
 	if err != nil {
 		return err
