@@ -225,13 +225,14 @@ func main() {
 				go readOut(out, stdoutReport, runTimeout, waitch, outch)
 				go readOut(stderr, stderrReport, runTimeout, waitch, errch)
 
-				go func() {
-					cerrCh := make(chan error)
+				//go func() {
+					cerrCh := make(chan error, 1)
 					go func() {
 						cerrCh <- cmd.Wait()
 					}()
 					select {
 					case cerr := <-cerrCh:
+						logger.Debugf("got cerr/wait")
 						close(cerrCh)
 						close(cmdKill[payload["run_id"]])
 						delete(cmdKill, payload["run_id"])
@@ -310,7 +311,8 @@ func main() {
 							qm.removeJob(payload["run_id"])
 						}
 					}
-				}()
+				//}()
+				logger.Debugf("time to send the wait")
 				waitch <- struct{}{}
 				waitch <- struct{}{}
 				<- outch
