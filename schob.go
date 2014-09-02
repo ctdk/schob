@@ -580,7 +580,7 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 			poutput := string(p)
 			holdch <- struct{}{}
 			logger.Debugf("Read %d bytes", b)
-			if e != io.EOF {
+			if e != nil && e != io.EOF {
 				logger.Errorf(e.Error())
 			}
 			err := outputReporter.SendReport(poutput, false)
