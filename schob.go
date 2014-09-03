@@ -327,7 +327,11 @@ func main() {
 					return
 				}
 			default:
-				logger.Debugf("Didn't know what to do with %s", eName.(string))
+				if _, ok := eName.(string); ok {
+					logger.Debugf("Didn't know what to do with %s", eName.(string))
+				} else {
+					logger.Debugf("Got an event we didn't know what to do with")
+				}
 			}
 		}()
 	}
