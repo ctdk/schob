@@ -49,8 +49,8 @@ var serfer *serfclient.RPCClient
 
 type queueManage struct {
 	shuttingDown bool
-	jobsRunning map[string]bool
-	saveFile string
+	jobsRunning  map[string]bool
+	saveFile     string
 	sync.RWMutex
 }
 
@@ -104,7 +104,7 @@ func main() {
 		logger.Criticalf(err.Error())
 		os.Exit(1)
 	}
-	log.Printf("whitelist is: %v", whitelist)
+	logger.Infof("whitelist is: %v", whitelist)
 
 	defer serfer.Stop(stream)
 
@@ -112,120 +112,119 @@ func main() {
 	cmdRun := make(map[string]*exec.Cmd)
 
 	for e := range streamCh {
-		go func(){
-		log.Printf("Got an event: %v", e)
-		eName, _ := e["Name"]
-		switch eName {
-		case "shovey":
-			logger.Debugf("in shovey control")
-			payload := make(map[string]string)
-			err = json.Unmarshal(e["Payload"].([]byte), &payload)
-			if err != nil {
-				logger.Errorf(err.Error())
-				os.Exit(1)
-			}
-			logger.Debugf("Job id is: %s", payload["run_id"])
-			logger.Debugf("payload is: %v", payload)
-			report, err := shoveyreport.New(config.ClientName, payload["run_id"], chefClient)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			action, ok := payload["action"]
-			if !ok {
-				logger.Infof("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
-				return
-			}
-			var runTimeout time.Duration
-			if payload["timeout"] != "" {
-				rt, err := strconv.Atoi(payload["timeout"])
+		go func() {
+			logger.Debugf("Got an event: %v", e)
+			eName, _ := e["Name"]
+			switch eName {
+			case "shovey":
+				logger.Debugf("in shovey control")
+				payload := make(map[string]string)
+				err = json.Unmarshal(e["Payload"].([]byte), &payload)
 				if err != nil {
-					logger.Errorf("supplied timeout %s for run %s invalid: %s", payload["timeout"], payload["run_id"], err.Error())
-					return
-				}
-				runTimeout = time.Duration(rt)
-			} else {
-				runTimeout = time.Duration(config.RunTimeout)
-			}
-
-			reqBlock := assembleReqBlock(payload)
-			if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
-				logger.Errorf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
-				return
-			} else {
-				logger.Debugf("job %s verified!", payload["run_id"])
-			}
-
-			switch action {
-			case "start":
-				if err = qm.addJob(payload["run_id"]); err != nil {
 					logger.Errorf(err.Error())
-					report.Status = "shutdown"
-					report.Error = "shovey client was shutting down"
-					err = report.SendReport()
-					if err != nil {
-						logger.Errorf("Error sending report: %s", err.Error())
-					}
+					os.Exit(1)
+				}
+				logger.Debugf("Job id is: %s", payload["run_id"])
+				logger.Debugf("payload is: %v", payload)
+				report, err := shoveyreport.New(config.ClientName, payload["run_id"], chefClient)
+				if err != nil {
+					logger.Errorf(err.Error())
 					return
 				}
-				c, ok := whitelist[payload["command"]]
+				action, ok := payload["action"]
 				if !ok {
-					log.Println("NACK")
-					report.Status = "nacked"
-					report.Error = fmt.Sprintf("command %s not in whitelist", payload["command"])
-					qm.removeJob(payload["run_id"])
+					logger.Infof("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
+					return
+				}
+				var runTimeout time.Duration
+				if payload["timeout"] != "" {
+					rt, err := strconv.Atoi(payload["timeout"])
+					if err != nil {
+						logger.Errorf("supplied timeout %s for run %s invalid: %s", payload["timeout"], payload["run_id"], err.Error())
+						return
+					}
+					runTimeout = time.Duration(rt)
+				} else {
+					runTimeout = time.Duration(config.RunTimeout)
+				}
+
+				reqBlock := assembleReqBlock(payload)
+				if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
+					logger.Errorf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
+					return
+				} else {
+					logger.Debugf("job %s verified!", payload["run_id"])
+				}
+
+				switch action {
+				case "start":
+					if err = qm.addJob(payload["run_id"]); err != nil {
+						logger.Errorf(err.Error())
+						report.Status = "shutdown"
+						report.Error = "shovey client was shutting down"
+						err = report.SendReport()
+						if err != nil {
+							logger.Errorf("Error sending report: %s", err.Error())
+						}
+						return
+					}
+					c, ok := whitelist[payload["command"]]
+					if !ok {
+						logger.Infof("NACK")
+						report.Status = "nacked"
+						report.Error = fmt.Sprintf("command %s not in whitelist", payload["command"])
+						qm.removeJob(payload["run_id"])
+						err = report.SendReport()
+						if err != nil {
+							logger.Errorf("Error sending report: %s", err.Error())
+						}
+						return
+					}
+					report.Status = "running"
 					err = report.SendReport()
 					if err != nil {
-						logger.Errorf("Error sending report: %s", err.Error())
+						logger.Errorf("Error sending good report: %s", err.Error())
 					}
-					return
-				}
-				report.Status = "running"
-				err = report.SendReport()
-				if err != nil {
-					logger.Errorf("Error sending good report: %s", err.Error())
-				}
 
-				logger.Debugf("Will execute %s", c)
-				args := cmdArgs(c.(string))
-				cmd := exec.Command(args[0], args[1:]...)
-				out := new(bytes.Buffer)
-				stderr := new(bytes.Buffer)
-				cmd.Stdout = out
-				cmd.Stderr = stderr
-				cerr := cmd.Start()
-				if cerr != nil {
-					report.Error = cerr.Error()
-					report.Status = "invalid"
-					report.SendReport()
-					return
-				}
-				cmdKill[payload["run_id"]] = make(chan struct{}, 1)
-				cmdRun[payload["run_id"]] = cmd
+					logger.Debugf("Will execute %s", c)
+					args := cmdArgs(c.(string))
+					cmd := exec.Command(args[0], args[1:]...)
+					out := new(bytes.Buffer)
+					stderr := new(bytes.Buffer)
+					cmd.Stdout = out
+					cmd.Stderr = stderr
+					cerr := cmd.Start()
+					if cerr != nil {
+						report.Error = cerr.Error()
+						report.Status = "invalid"
+						report.SendReport()
+						return
+					}
+					cmdKill[payload["run_id"]] = make(chan struct{}, 1)
+					cmdRun[payload["run_id"]] = cmd
 
-				outch := make(chan struct{}, 1)
-				errch := make(chan struct{}, 1)
-				waitch := make(chan struct{}, 2)
+					outch := make(chan struct{}, 1)
+					errch := make(chan struct{}, 1)
+					waitch := make(chan struct{}, 2)
 
-				stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
-				if err != nil {
-					report.Error = err.Error()
-					report.Status = "bad_fh"
-					report.SendReport()
-					return
-				}
-				stderrReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stderr", chefClient)
-				if err != nil {
-					report.Error = err.Error()
-					report.Status = "bad_fh"
-					report.SendReport()
-					return
-				}
+					stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
+					if err != nil {
+						report.Error = err.Error()
+						report.Status = "bad_fh"
+						report.SendReport()
+						return
+					}
+					stderrReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stderr", chefClient)
+					if err != nil {
+						report.Error = err.Error()
+						report.Status = "bad_fh"
+						report.SendReport()
+						return
+					}
 
-				go readOut(out, stdoutReport, runTimeout, waitch, outch)
-				go readOut(stderr, stderrReport, runTimeout, waitch, errch)
+					go readOut(out, stdoutReport, runTimeout, waitch, outch)
+					go readOut(stderr, stderrReport, runTimeout, waitch, errch)
 
-				//go func() {
 					cerrCh := make(chan error, 1)
 					go func() {
 						cerrCh <- cmd.Wait()
@@ -257,10 +256,10 @@ func main() {
 						// Probably want to tell the
 						// server what happened here
 						// later
-						log.Printf("cancelling job %s", payload["run_id"])
+						logger.Infof("cancelling job %s", payload["run_id"])
 						cmd, ok := cmdRun[payload["run_id"]]
 						if !ok {
-							log.Printf("Job ID %s not found or finished running", payload["run_id"])
+							logger.Errorf("Job ID %s not found or finished running", payload["run_id"])
 							return
 						}
 
@@ -311,27 +310,26 @@ func main() {
 							qm.removeJob(payload["run_id"])
 						}
 					}
-				//}()
-				logger.Debugf("time to send the wait")
-				waitch <- struct{}{}
-				waitch <- struct{}{}
-				<- outch
-				<- errch
-			case "cancel":
-				if p, ok := cmdKill[payload["run_id"]]; ok {
-					logger.Debugf("Sending notice to kill job %s", payload["run_id"])
-					p <- struct{}{}
+					logger.Debugf("time to send the wait")
+					waitch <- struct{}{}
+					waitch <- struct{}{}
+					<-outch
+					<-errch
+				case "cancel":
+					if p, ok := cmdKill[payload["run_id"]]; ok {
+						logger.Debugf("Sending notice to kill job %s", payload["run_id"])
+						p <- struct{}{}
+						return
+					}
+					logger.Debugf("Cancelling job %s failed, because the job was no longer running")
+				default:
+					logger.Warningf("Unknown action %s", action)
 					return
 				}
-				logger.Debugf("Cancelling job %s failed, because the job was no longer running")
 			default:
-				logger.Warningf("Unknown action %s", action)
-				return
+				logger.Debugf("Didn't know what to do with %s", eName.(string))
 			}
-		default:
-			logger.Debugf("Didn't know what to do with %s", eName.(string))
-		}
-	}()
+		}()
 	}
 }
 
@@ -421,12 +419,12 @@ func verifyRequest(signature, reqBlock string, pubKey *rsa.PublicKey) error {
 func handleSignals(qm *queueManage) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func(qm *queueManage){
+	go func(qm *queueManage) {
 		for sig := range c {
 			logger.Debugf("Received signal %s", sig)
 			qm.setShutDown()
 			sd := make(chan struct{}, 1)
-			go func(){
+			go func() {
 				select {
 				case <-sd:
 					os.Exit(0)
@@ -466,7 +464,7 @@ func (q *queueManage) addJob(jobID string) error {
 	}
 	q.jobsRunning[jobID] = true
 	return q.saveStatus()
-	
+
 }
 
 func (q *queueManage) removeJob(jobID string) error {
@@ -530,7 +528,7 @@ func (q *queueManage) checkOldJobs(saveFile string, config *conf, chefClient *ch
 	if err != nil {
 		return err
 	}
-	
+
 	if len(mj) != 0 {
 		logger.Debugf("Found what appear to be %d jobs that weren't able to finish the last time schob was running", len(mj))
 		for k := range mj {
@@ -559,7 +557,7 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 	go func() {
 		logger.Debugf("In read go func")
 		for readstop == false {
-			<- holdch 
+			<-holdch
 			if reader.Len() >= 1024 {
 				bufch <- struct{}{}
 			} else {
@@ -569,11 +567,10 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 		}
 		logger.Debugf("leaving read go func")
 	}()
-	Loop:
+Loop:
 	for {
 		select {
-		case <- bufch:
-			//<- holdch
+		case <-bufch:
 			logger.Debugf("reading %s at seq %d", outputReporter.OutputType, outputReporter.Seq)
 			p := make([]byte, 1024)
 			b, e := reader.Read(p)
@@ -587,8 +584,8 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 			if err != nil {
 				logger.Errorf(err.Error())
 			}
-		case <- stopch:
-			<- holdch
+		case <-stopch:
+			<-holdch
 			logger.Debugf("%s reading after the end of execution, seq %d", outputReporter.OutputType, outputReporter.Seq)
 			logger.Debugf("reader is %d bytes", reader.Len())
 			output := reader.String()
@@ -598,8 +595,8 @@ func readOut(reader *bytes.Buffer, outputReporter *shoveyreport.OutputReport, ru
 				logger.Errorf(err.Error())
 			}
 			break Loop
-		case <- time.After(timeout * time.Minute):
-			<- holdch
+		case <-time.After(timeout * time.Minute):
+			<-holdch
 			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
 			err := outputReporter.SendReport(reader.String(), true)
 			holdch <- struct{}{}
