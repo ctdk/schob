@@ -28,6 +28,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 )
 
 const version = "0.0.1"
@@ -41,6 +42,8 @@ type conf struct {
 	ClientName    string `toml:"clientname"`
 	KeyFileName   string `toml:"key-file"`
 	Key           string
+	TimeSlew string `toml:"time-slew"`
+	TimeSlewDur time.Duration
 	WhitelistFile string `toml:"whitelist"`
 	RunTimeout    int    `toml:"run-timeout"`
 	SigningPubKey string `toml:"sign-pub-key"`
@@ -58,6 +61,7 @@ type options struct {
 	Endpoint      string `short:"e" long:"endpoint" description:"Server endpoint"`
 	ClientName    string `short:"n" long:"node-name" description:"This node's name"`
 	KeyFileName   string `short:"k" long:"key-file" description:"Path to node client private key"`
+	TimeSlew          string `short:"m" long:"time-slew" description:"Time difference allowed between the node's clock and the time sent in the serf command from the server. Formatted like 5m, 150s, etc. Defaults to 15m."`
 	WhitelistFile string `short:"w" long:"whitelist" description:"Path to JSON file containing whitelisted commands"`
 	RunTimeout    int    `short:"t" long:"run-timeout" description:"The time, in minutes, to wait before stopping a job. Separate from the timeout set from the server, this is a fallback. Defaults to 45 minutes."`
 	SigningPubKey string `short:"p" long:"sign-pub-key" description:"Path to public key used to verify signed requests from the server."`
@@ -91,6 +95,20 @@ func parseConfig() (*conf, error) {
 	if opts.Version {
 		fmt.Printf("schob version %s\n", version)
 		os.Exit(0)
+	}
+
+	if opts.TimeSlew != "" {
+		config.TimeSlew = opts.TimeSlew
+	}
+	if config.TimeSlew != "" {
+		d, derr := time.ParseDuration(config.TimeSlew)
+		if derr != nil {
+			logger.Criticalf("Error parsing time-slew: %s", derr.Error())
+			os.Exit(1)
+		}
+		config.TimeSlewDur = d
+	} else {
+		config.TimeSlewDur, _ = time.ParseDuration("15m")
 	}
 
 	if opts.LogFile != "" {

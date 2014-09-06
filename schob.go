@@ -140,6 +140,9 @@ func main() {
 				action, ok := payload["action"]
 				if !ok {
 					logger.Infof("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
+					report.Error = fmt.Sprintf("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
+					report.Status = "invalid"
+					report.SendReport()
 					return
 				}
 				var runTimeout time.Duration
@@ -147,6 +150,9 @@ func main() {
 					rt, err := strconv.Atoi(payload["timeout"])
 					if err != nil {
 						logger.Errorf("supplied timeout %s for run %s invalid: %s", payload["timeout"], payload["run_id"], err.Error())
+						report.Error = err.Error()
+						report.Status = "invalid"
+						report.SendReport()
 						return
 					}
 					runTimeout = time.Duration(rt)
@@ -157,9 +163,20 @@ func main() {
 				reqBlock := assembleReqBlock(payload)
 				if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
 					logger.Errorf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
+					report.Error = fmt.Sprintf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
+					report.Status = "invalid"
+					report.SendReport()
 					return
 				} else {
 					logger.Debugf("job %s verified!", payload["run_id"])
+				}
+				tok, err := checkTimeStamp(payload["time"], config.TimeSlewDur)
+				if !tok {
+					logger.Errorf(err.Error())
+					report.Error = err.Error()
+					report.Status = "invalid"
+					report.SendReport()
+					return
 				}
 
 				switch action {
@@ -660,4 +677,21 @@ Loop:
 	}
 	readstop = true
 	finishch <- struct{}{}
+}
+
+func checkTimeStamp(timestamp string, slew time.Duration) (bool, error) {
+	timeNow := time.Now().UTC()
+	timeHeader, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return false, err
+	}
+	tdiff := timeNow.Sub(timeHeader)
+	if tdiff < 0 {
+		tdiff = -tdiff
+	}
+	if tdiff > slew {
+		err = fmt.Errorf("Authentication failed. Please check your system's clock.")
+		return false, err
+	}
+	return true, nil
 }
