@@ -46,15 +46,15 @@ type Report struct {
 }
 
 type OutputReport struct {
-	Node string `json:"node_name"`
-	RunID string `json:"run_id"`
-	Seq int `json:"seq"`
-	IsLast bool `json:"is_last"`
-	OutputType string `json:"output_type"`
-	Output string `json:"output"`
+	Node          string `json:"node_name"`
+	RunID         string `json:"run_id"`
+	Seq           int    `json:"seq"`
+	IsLast        bool   `json:"is_last"`
+	OutputType    string `json:"output_type"`
+	Output        string `json:"output"`
 	ProtocolMajor int    `json:"protocol_major"`
 	ProtocolMinor int    `json:"protocol_minor"`
-	chefClient *chef.Client
+	chefClient    *chef.Client
 	sync.Mutex
 }
 
@@ -107,7 +107,7 @@ func (r *Report) shoveyURL() string {
 	return url
 }
 
-// NewOutputReport builds a new reporter for streaming output (stdout and 
+// NewOutputReport builds a new reporter for streaming output (stdout and
 // stderr) from a job back to the server.
 func NewOutputReport(node, runID, outputType string, chefClient *chef.Client) (*OutputReport, error) {
 	if runID == "" {
@@ -126,7 +126,7 @@ func NewOutputReport(node, runID, outputType string, chefClient *chef.Client) (*
 		err := fmt.Errorf("runID %s did not validate as a UUID", runID)
 		return nil, err
 	}
-	r := &OutputReport{ Node: node, RunID: runID, OutputType: outputType, ProtocolMajor: shoveyProtoMajorVersion, ProtocolMinor: shoveyProtoMinorVersion, Seq: 0, chefClient: chefClient }
+	r := &OutputReport{Node: node, RunID: runID, OutputType: outputType, ProtocolMajor: shoveyProtoMajorVersion, ProtocolMinor: shoveyProtoMinorVersion, Seq: 0, chefClient: chefClient}
 	return r, nil
 }
 
