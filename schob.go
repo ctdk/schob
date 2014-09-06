@@ -54,6 +54,11 @@ type queueManage struct {
 	sync.RWMutex
 }
 
+type wl struct {
+	items map[string]interface{}
+	sync.RWMutex
+}
+
 func main() {
 	config, err := parseConfig()
 	if err != nil {
@@ -87,7 +92,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	handleSignals(qm)
+	whitelist, err := loadWhitelist(config.WhitelistFile)
+	if err != nil {
+		logger.Criticalf(err.Error())
+		os.Exit(1)
+	}
+	logger.Infof("whitelist is: %v", whitelist)
+
+	handleSignals(qm, config, chefClient, serfer, whitelist)
 
 	// start the heartbeat messages
 	go heartbeat(config.ClientName)
@@ -99,12 +111,6 @@ func main() {
 		logger.Criticalf(err.Error())
 		os.Exit(1)
 	}
-	whitelist, err := loadWhitelist(config.WhitelistFile)
-	if err != nil {
-		logger.Criticalf(err.Error())
-		os.Exit(1)
-	}
-	logger.Infof("whitelist is: %v", whitelist)
 
 	defer serfer.Stop(stream)
 
@@ -168,7 +174,7 @@ func main() {
 						}
 						return
 					}
-					c, ok := whitelist[payload["command"]]
+					c, ok := whitelist.get(payload["command"])
 					if !ok {
 						logger.Infof("NACK")
 						report.Status = "nacked"
@@ -361,19 +367,27 @@ func heartbeat(clientName string) {
 	}
 }
 
-func loadWhitelist(wlFile string) (map[string]interface{}, error) {
+func loadWhitelist(wlFile string) (*wl, error) {
 	fp, err := os.Open(wlFile)
 	defer fp.Close()
 	if err != nil {
 		return nil, err
 	}
-	wl := make(map[string]interface{})
+	wlist := make(map[string]interface{})
 	dec := json.NewDecoder(fp)
-	if err = dec.Decode(&wl); err != nil {
+	if err = dec.Decode(&wlist); err != nil {
 		return nil, err
 	}
-	wls := wl["whitelist"].(map[string]interface{})
+	wls := &wl{}
+	wls.items = wlist["whitelist"].(map[string]interface{})
 	return wls, nil
+}
+
+func (w *wl) get(key string) (interface{}, bool) {
+	w.RLock()
+	defer w.RUnlock()
+	c, ok := w.items[key]
+	return c, ok
 }
 
 func cmdArgs(cmd string) []string {
@@ -420,35 +434,69 @@ func verifyRequest(signature, reqBlock string, pubKey *rsa.PublicKey) error {
 	return rsa.VerifyPKCS1v15(pubKey, crypto.SHA1, sigSha[:], sig)
 }
 
-func handleSignals(qm *queueManage) {
+func handleSignals(qm *queueManage, config *conf, chefClient *chef.Client, serfer *serfclient.RPCClient, whitelist *wl) {
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func(qm *queueManage) {
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func(qm *queueManage, config *conf, chefClient *chef.Client, serfer *serfclient.RPCClient, whitelist *wl) {
 		for sig := range c {
 			logger.Debugf("Received signal %s", sig)
-			qm.setShutDown()
-			sd := make(chan struct{}, 1)
-			go func() {
-				select {
-				case <-sd:
-					os.Exit(0)
-				case <-time.After(time.Duration(120) * time.Second):
-					logger.Errorf("Not all jobs ended before exiting")
+			switch sig {
+			case os.Interrupt, syscall.SIGTERM:
+				logger.Infof("Shutting down")
+				qm.setShutDown()
+				sd := make(chan struct{}, 1)
+				go func() {
+					select {
+					case <-sd:
+						os.Exit(0)
+					case <-time.After(time.Duration(120) * time.Second):
+						logger.Errorf("Not all jobs ended before exiting")
+						os.Exit(1)
+					}
+				}()
+				for {
+					if qm.numberOfJobs() != 0 {
+						logger.Infof("Waiting for %d jobs to finish before shutting down...", qm.numberOfJobs())
+						time.Sleep(time.Duration(5) * time.Second)
+					} else {
+						logger.Infof("No jobs remaining")
+						sd <- struct{}{}
+						break
+					}
+				}
+			case syscall.SIGHUP:
+				var err error
+				logger.Infof("Reloading configuration...")
+				config, err = parseConfig()
+				if err != nil {
+					logger.Criticalf(err.Error())
 					os.Exit(1)
 				}
-			}()
-			for {
-				if qm.numberOfJobs() != 0 {
-					logger.Infof("Waiting for %d jobs to finish before shutting down...", qm.numberOfJobs())
-					time.Sleep(time.Duration(5) * time.Second)
-				} else {
-					logger.Infof("No jobs remaining")
-					sd <- struct{}{}
-					break
+				clientConfig := &chef.Config{Name: config.ClientName, Key: config.Key, SkipSSL: true, BaseURL: config.Endpoint}
+				chefClient, err = chef.NewClient(clientConfig)
+				if err != nil {
+					logger.Criticalf(err.Error())
+					os.Exit(1)
 				}
+
+				serfer, err = serfclient.NewRPCClient(config.SerfAddr)
+				if err != nil {
+					logger.Criticalf(err.Error())
+					os.Exit(1)
+				}
+				whitelist.Lock()
+				wl, err := loadWhitelist(config.WhitelistFile)
+				if err != nil {
+					logger.Criticalf(err.Error())
+					os.Exit(1)
+				}
+				whitelist.items = wl.items
+				whitelist.Unlock()
+			default:
+				logger.Infof("Got signal %s %v, not handled", sig, sig)
 			}
 		}
-	}(qm)
+	}(qm, config, chefClient, serfer, whitelist)
 }
 
 func (q *queueManage) setShutDown() {
