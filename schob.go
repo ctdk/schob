@@ -157,8 +157,9 @@ func main() {
 					}
 					runTimeout = time.Duration(rt)
 				} else {
-					runTimeout = time.Duration(config.RunTimeout)
+					runTimeout = time.Duration(config.RunTimeout) * time.Second
 				}
+				logger.Debugf("timeout is %d", runTimeout)
 
 				reqBlock := assembleReqBlock(payload)
 				if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
@@ -319,7 +320,7 @@ func main() {
 					// really-really timeout separate from
 					// the main one the server uses, in case
 					// something gets out of hand.
-					case <-time.After(runTimeout * time.Minute):
+					case <-time.After(runTimeout * time.Second):
 						logger.Infof("Job %s running too long, killing", payload["run_id"])
 						cmd, ok := cmdRun[payload["run_id"]]
 						if !ok {
@@ -332,6 +333,9 @@ func main() {
 						} else {
 							qm.removeJob(payload["run_id"])
 						}
+						report.Status = "failed"
+						report.Error = fmt.Sprintf("Job %s on node %s timed out", report.RunID, report.Node)
+						report.SendReport()
 					}
 					logger.Debugf("time to send the wait")
 					waitch <- struct{}{}
@@ -664,7 +668,7 @@ Loop:
 				logger.Errorf(err.Error())
 			}
 			break Loop
-		case <-time.After(timeout * time.Minute):
+		case <-time.After(timeout * time.Second):
 			<-holdch
 			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
 			err := outputReporter.SendReport(reader.String(), true)

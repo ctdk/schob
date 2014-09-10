@@ -178,7 +178,7 @@ func parseConfig() (*conf, error) {
 		config.SigningPubKey = opts.SigningPubKey
 	}
 	if config.RunTimeout == 0 {
-		config.RunTimeout = 45
+		config.RunTimeout = 45 * int(time.Second)
 	}
 
 	if opts.QueueSaveFile != "" {
