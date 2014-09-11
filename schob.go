@@ -168,9 +168,8 @@ func main() {
 					report.Status = "invalid"
 					report.SendReport()
 					return
-				} else {
-					logger.Debugf("job %s verified!", payload["run_id"])
 				}
+				logger.Debugf("job %s verified!", payload["run_id"])
 				tok, err := checkTimeStamp(payload["time"], config.TimeSlewDur)
 				if !tok {
 					logger.Errorf(err.Error())

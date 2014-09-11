@@ -30,7 +30,8 @@ import (
 	"time"
 )
 
-// Report is the struct that holds all the information to send.
+// Report is the struct that holds all the information to send for a shovey
+// run's reports to the server.
 type Report struct {
 	Node          string `json:"node_name"`
 	RunID         string `json:"run_id"`
@@ -45,6 +46,7 @@ type Report struct {
 	chefClient    *chef.Client
 }
 
+// OutputReport sends stdout and stderr output streams to the server.
 type OutputReport struct {
 	Node          string `json:"node_name"`
 	RunID         string `json:"run_id"`
