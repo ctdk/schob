@@ -36,11 +36,8 @@ type Report struct {
 	Node          string `json:"node_name"`
 	RunID         string `json:"run_id"`
 	Status        string `json:"status"`
-	Stderr        string `json:"stderr"`
 	ExitStatus    uint8  `json:"exit_status"`
 	Error         string `json:"error"`
-	Output        string `json:"output"`
-	RunDuration   int    `json:"duration"`
 	ProtocolMajor int    `json:"protocol_major"`
 	ProtocolMinor int    `json:"protocol_minor"`
 	chefClient    *chef.Client

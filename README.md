@@ -5,7 +5,7 @@ At the moment, it's not ready for real use. It's still deep in testing. It's rea
 1. Checkout the "serfing" branch from goiardi
 2. Create an RSA keypair for signing shovey requests
 3. Install serf and run it as "serf agent"
-4. Run goiardi in in-memory mode (at this writing, MySQL and Postgres in goiardi don't support shovey yet) with these extra options: `--use-serf --use-shovey --sign-priv-key=/path/to/private.key --sign-pub-key=/path/to/public.key`
+4. Run goiardi with these extra options: `--use-serf --use-shovey --sign-priv-key=/path/to/private.key --sign-pub-key=/path/to/public.key`
 5. Install knife-shove from https://github.com/ctdk/knife-shove
 6. Set up the node in goiardi you want to test shovey on. I've been using the computer I do my usual goiardi dev work for most of it.
 7. Install schob the usual go way
