@@ -604,7 +604,7 @@ func streamProcess(e map[string]interface{}, qm *queueManage, cmdKill map[string
 					report.ExitStatus = uint8(sysInfo.ExitStatus())
 					report.Status = "failed"
 				} else {
-					report.Status = "completed"
+					report.Status = "succeeded"
 				}
 				report.SendReport()
 				// get rid of the command now?
