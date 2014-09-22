@@ -118,245 +118,7 @@ func main() {
 	cmdRun := make(map[string]*exec.Cmd)
 
 	for e := range streamCh {
-		go func() {
-			logger.Debugf("Got an event: %v", e)
-			eName, _ := e["Name"]
-			switch eName {
-			case "shovey":
-				logger.Debugf("in shovey control")
-				payload := make(map[string]string)
-				err = json.Unmarshal(e["Payload"].([]byte), &payload)
-				if err != nil {
-					logger.Errorf(err.Error())
-					os.Exit(1)
-				}
-				logger.Debugf("Job id is: %s", payload["run_id"])
-				logger.Debugf("payload is: %v", payload)
-				report, err := shoveyreport.New(config.ClientName, payload["run_id"], chefClient)
-				if err != nil {
-					logger.Errorf(err.Error())
-					return
-				}
-				action, ok := payload["action"]
-				if !ok {
-					logger.Infof("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
-					report.Error = fmt.Sprintf("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
-					report.Status = "invalid"
-					report.SendReport()
-					return
-				}
-				var runTimeout time.Duration
-				if payload["timeout"] != "" {
-					rt, err := strconv.Atoi(payload["timeout"])
-					if err != nil {
-						logger.Errorf("supplied timeout %s for run %s invalid: %s", payload["timeout"], payload["run_id"], err.Error())
-						report.Error = err.Error()
-						report.Status = "invalid"
-						report.SendReport()
-						return
-					}
-					runTimeout = time.Duration(rt)
-				} else {
-					runTimeout = time.Duration(config.RunTimeout) * time.Second
-				}
-				logger.Debugf("timeout is %d", runTimeout)
-
-				reqBlock := assembleReqBlock(payload)
-				if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
-					logger.Errorf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
-					report.Error = fmt.Sprintf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
-					report.Status = "invalid"
-					report.SendReport()
-					return
-				}
-				logger.Debugf("job %s verified!", payload["run_id"])
-				tok, err := checkTimeStamp(payload["time"], config.TimeSlewDur)
-				if !tok {
-					logger.Errorf(err.Error())
-					report.Error = err.Error()
-					report.Status = "invalid"
-					report.SendReport()
-					return
-				}
-
-				switch action {
-				case "start":
-					if err = qm.addJob(payload["run_id"]); err != nil {
-						logger.Errorf(err.Error())
-						report.Status = "shutdown"
-						report.Error = "shovey client was shutting down"
-						err = report.SendReport()
-						if err != nil {
-							logger.Errorf("Error sending report: %s", err.Error())
-						}
-						return
-					}
-					c, ok := whitelist.get(payload["command"])
-					if !ok {
-						logger.Infof("NACK")
-						report.Status = "nacked"
-						report.Error = fmt.Sprintf("command %s not in whitelist", payload["command"])
-						qm.removeJob(payload["run_id"])
-						err = report.SendReport()
-						if err != nil {
-							logger.Errorf("Error sending report: %s", err.Error())
-						}
-						return
-					}
-					report.Status = "running"
-					err = report.SendReport()
-					if err != nil {
-						logger.Errorf("Error sending good report: %s", err.Error())
-					}
-
-					logger.Debugf("Will execute %s", c)
-					args := cmdArgs(c.(string))
-					cmd := exec.Command(args[0], args[1:]...)
-					out := new(bytes.Buffer)
-					stderr := new(bytes.Buffer)
-					cmd.Stdout = out
-					cmd.Stderr = stderr
-					cerr := cmd.Start()
-					if cerr != nil {
-						report.Error = cerr.Error()
-						report.Status = "invalid"
-						report.SendReport()
-						return
-					}
-					cmdKill[payload["run_id"]] = make(chan struct{}, 1)
-					cmdRun[payload["run_id"]] = cmd
-
-					outch := make(chan struct{}, 1)
-					errch := make(chan struct{}, 1)
-					waitch := make(chan struct{}, 2)
-
-					stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
-					if err != nil {
-						report.Error = err.Error()
-						report.Status = "bad_fh"
-						report.SendReport()
-						return
-					}
-					stderrReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stderr", chefClient)
-					if err != nil {
-						report.Error = err.Error()
-						report.Status = "bad_fh"
-						report.SendReport()
-						return
-					}
-
-					go readOut(out, stdoutReport, runTimeout, waitch, outch)
-					go readOut(stderr, stderrReport, runTimeout, waitch, errch)
-
-					cerrCh := make(chan error, 1)
-					go func() {
-						cerrCh <- cmd.Wait()
-					}()
-					select {
-					case cerr := <-cerrCh:
-						logger.Debugf("got cerr/wait")
-						close(cerrCh)
-						close(cmdKill[payload["run_id"]])
-						delete(cmdKill, payload["run_id"])
-						if cerr != nil {
-							report.Error = cmd.ProcessState.String()
-							sysInfo := cmd.ProcessState.Sys().(syscall.WaitStatus)
-							report.ExitStatus = uint8(sysInfo.ExitStatus())
-							report.Status = "failed"
-						} else {
-							report.Status = "completed"
-						}
-						report.SendReport()
-						// get rid of the command now?
-						delete(cmdRun, payload["run_id"])
-						logger.Infof("Finished job %s", payload["run_id"])
-						qm.removeJob(payload["run_id"])
-						logger.Infof("removed job from queue manager")
-					case <-cmdKill[payload["run_id"]]:
-						// Probably want to tell the
-						// server what happened here
-						// later
-						logger.Infof("cancelling job %s", payload["run_id"])
-						cmd, ok := cmdRun[payload["run_id"]]
-						if !ok {
-							logger.Errorf("Job ID %s not found or finished running", payload["run_id"])
-							return
-						}
-
-						errCh := make(chan error, 1)
-
-						go func() {
-							errCh <- cmd.Process.Signal(os.Interrupt)
-						}()
-
-						select {
-						case err := <-errCh:
-							if err != nil {
-								logger.Errorf(err.Error())
-							} else {
-								logger.Debugf("cancelling was successful")
-								delete(cmdRun, payload["run_id"])
-								qm.removeJob(payload["run_id"])
-							}
-							close(cmdKill[payload["run_id"]])
-							delete(cmdKill, payload["run_id"])
-						case <-time.After(time.Duration(120) * time.Second):
-							err := cmd.Process.Kill()
-							if err != nil {
-								logger.Errorf(err.Error())
-							} else {
-								close(cmdKill[payload["run_id"]])
-								delete(cmdKill, payload["run_id"])
-								qm.removeJob(payload["run_id"])
-								logger.Debugf("Job %s timed out", payload["run_id"])
-
-							}
-						}
-					// should also be configurable: a
-					// really-really timeout separate from
-					// the main one the server uses, in case
-					// something gets out of hand.
-					case <-time.After(runTimeout * time.Second):
-						logger.Infof("Job %s running too long, killing", payload["run_id"])
-						cmd, ok := cmdRun[payload["run_id"]]
-						if !ok {
-							logger.Debugf("Job ID %s not found or finished running", payload["run_id"])
-							return
-						}
-						err := cmd.Process.Kill()
-						if err != nil {
-							logger.Errorf(err.Error())
-						} else {
-							qm.removeJob(payload["run_id"])
-						}
-						report.Status = "failed"
-						report.Error = fmt.Sprintf("Job %s on node %s timed out", report.RunID, report.Node)
-						report.SendReport()
-					}
-					logger.Debugf("time to send the wait")
-					waitch <- struct{}{}
-					waitch <- struct{}{}
-					<-outch
-					<-errch
-				case "cancel":
-					if p, ok := cmdKill[payload["run_id"]]; ok {
-						logger.Debugf("Sending notice to kill job %s", payload["run_id"])
-						p <- struct{}{}
-						return
-					}
-					logger.Debugf("Cancelling job %s failed, because the job was no longer running")
-				default:
-					logger.Warningf("Unknown action %s", action)
-					return
-				}
-			default:
-				if _, ok := eName.(string); ok {
-					logger.Debugf("Didn't know what to do with %s", eName.(string))
-				} else {
-					logger.Debugf("Got an event we didn't know what to do with")
-				}
-			}
-		}()
+		go streamProcess(e, qm, cmdKill, cmdRun, config, chefClient, whitelist)
 	}
 }
 
@@ -694,4 +456,244 @@ func checkTimeStamp(timestamp string, slew time.Duration) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func streamProcess(e map[string]interface{}, qm *queueManage, cmdKill map[string]chan struct{}, cmdRun map[string]*exec.Cmd, config *conf, chefClient *chef.Client, whitelist *wl) {
+	logger.Debugf("Got an event: %v", e)
+	eName, _ := e["Name"]
+	switch eName {
+	case "shovey":
+		logger.Debugf("in shovey control")
+		payload := make(map[string]string)
+		err := json.Unmarshal(e["Payload"].([]byte), &payload)
+		if err != nil {
+			logger.Errorf(err.Error())
+			os.Exit(1)
+		}
+		logger.Debugf("Job id is: %s", payload["run_id"])
+		logger.Debugf("payload is: %v", payload)
+		report, err := shoveyreport.New(config.ClientName, payload["run_id"], chefClient)
+		if err != nil {
+			logger.Errorf(err.Error())
+			return
+		}
+		action, ok := payload["action"]
+		if !ok {
+			logger.Infof("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
+			report.Error = fmt.Sprintf("No action given for command %s with job ID %s", payload["command"], payload["run_id"])
+			report.Status = "invalid"
+			report.SendReport()
+			return
+		}
+		var runTimeout time.Duration
+		if payload["timeout"] != "" {
+			rt, err := strconv.Atoi(payload["timeout"])
+			if err != nil {
+				logger.Errorf("supplied timeout %s for run %s invalid: %s", payload["timeout"], payload["run_id"], err.Error())
+				report.Error = err.Error()
+				report.Status = "invalid"
+				report.SendReport()
+				return
+			}
+			runTimeout = time.Duration(rt)
+		} else {
+			runTimeout = time.Duration(config.RunTimeout) * time.Second
+		}
+		logger.Debugf("timeout is %d", runTimeout)
+
+		reqBlock := assembleReqBlock(payload)
+		if err = verifyRequest(payload["signature"], reqBlock, config.PubKey); err != nil {
+			logger.Errorf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
+			report.Error = fmt.Sprintf("Command id %s running '%s' could not be verified! %s", payload["run_id"], payload["command"], err.Error())
+			report.Status = "invalid"
+			report.SendReport()
+			return
+		}
+		logger.Debugf("job %s verified!", payload["run_id"])
+		tok, err := checkTimeStamp(payload["time"], config.TimeSlewDur)
+		if !tok {
+			logger.Errorf(err.Error())
+			report.Error = err.Error()
+			report.Status = "invalid"
+			report.SendReport()
+			return
+		}
+
+		switch action {
+		case "start":
+			if err = qm.addJob(payload["run_id"]); err != nil {
+				logger.Errorf(err.Error())
+				report.Status = "shutdown"
+				report.Error = "shovey client was shutting down"
+				err = report.SendReport()
+				if err != nil {
+					logger.Errorf("Error sending report: %s", err.Error())
+				}
+				return
+			}
+			c, ok := whitelist.get(payload["command"])
+			if !ok {
+				logger.Infof("NACK")
+				report.Status = "nacked"
+				report.Error = fmt.Sprintf("command %s not in whitelist", payload["command"])
+				qm.removeJob(payload["run_id"])
+				err = report.SendReport()
+				if err != nil {
+					logger.Errorf("Error sending report: %s", err.Error())
+				}
+				return
+			}
+			report.Status = "running"
+			err = report.SendReport()
+			if err != nil {
+				logger.Errorf("Error sending good report: %s", err.Error())
+			}
+
+			logger.Debugf("Will execute %s", c)
+			args := cmdArgs(c.(string))
+			cmd := exec.Command(args[0], args[1:]...)
+			out := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			cmd.Stdout = out
+			cmd.Stderr = stderr
+			cerr := cmd.Start()
+			if cerr != nil {
+				report.Error = cerr.Error()
+				report.Status = "invalid"
+				report.SendReport()
+				return
+			}
+			cmdKill[payload["run_id"]] = make(chan struct{}, 1)
+			cmdRun[payload["run_id"]] = cmd
+
+			outch := make(chan struct{}, 1)
+			errch := make(chan struct{}, 1)
+			waitch := make(chan struct{}, 2)
+
+			stdoutReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stdout", chefClient)
+			if err != nil {
+				report.Error = err.Error()
+				report.Status = "bad_fh"
+				report.SendReport()
+				return
+			}
+			stderrReport, err := shoveyreport.NewOutputReport(config.ClientName, payload["run_id"], "stderr", chefClient)
+			if err != nil {
+				report.Error = err.Error()
+				report.Status = "bad_fh"
+				report.SendReport()
+				return
+			}
+
+			go readOut(out, stdoutReport, runTimeout, waitch, outch)
+			go readOut(stderr, stderrReport, runTimeout, waitch, errch)
+
+			cerrCh := make(chan error, 1)
+			go func() {
+				cerrCh <- cmd.Wait()
+			}()
+			select {
+			case cerr := <-cerrCh:
+				logger.Debugf("got cerr/wait")
+				close(cerrCh)
+				close(cmdKill[payload["run_id"]])
+				delete(cmdKill, payload["run_id"])
+				if cerr != nil {
+					report.Error = cmd.ProcessState.String()
+					sysInfo := cmd.ProcessState.Sys().(syscall.WaitStatus)
+					report.ExitStatus = uint8(sysInfo.ExitStatus())
+					report.Status = "failed"
+				} else {
+					report.Status = "completed"
+				}
+				report.SendReport()
+				// get rid of the command now?
+				delete(cmdRun, payload["run_id"])
+				logger.Infof("Finished job %s", payload["run_id"])
+				qm.removeJob(payload["run_id"])
+				logger.Infof("removed job from queue manager")
+			case <-cmdKill[payload["run_id"]]:
+				// Probably want to tell the
+				// server what happened here
+				// later
+				logger.Infof("cancelling job %s", payload["run_id"])
+				cmd, ok := cmdRun[payload["run_id"]]
+				if !ok {
+					logger.Errorf("Job ID %s not found or finished running", payload["run_id"])
+					return
+				}
+
+				errCh := make(chan error, 1)
+
+				go func() {
+					errCh <- cmd.Process.Signal(os.Interrupt)
+				}()
+
+				select {
+				case err := <-errCh:
+					if err != nil {
+						logger.Errorf(err.Error())
+					} else {
+						logger.Debugf("cancelling was successful")
+						delete(cmdRun, payload["run_id"])
+						qm.removeJob(payload["run_id"])
+					}
+					close(cmdKill[payload["run_id"]])
+					delete(cmdKill, payload["run_id"])
+				case <-time.After(time.Duration(120) * time.Second):
+					err := cmd.Process.Kill()
+					if err != nil {
+						logger.Errorf(err.Error())
+					} else {
+						close(cmdKill[payload["run_id"]])
+						delete(cmdKill, payload["run_id"])
+						qm.removeJob(payload["run_id"])
+						logger.Debugf("Job %s timed out", payload["run_id"])
+
+					}
+				}
+			// should also be configurable: a
+			// really-really timeout separate from
+			// the main one the server uses, in case
+			// something gets out of hand.
+			case <-time.After(runTimeout * time.Second):
+				logger.Infof("Job %s running too long, killing", payload["run_id"])
+				cmd, ok := cmdRun[payload["run_id"]]
+				if !ok {
+					logger.Debugf("Job ID %s not found or finished running", payload["run_id"])
+					return
+				}
+				err := cmd.Process.Kill()
+				if err != nil {
+					logger.Errorf(err.Error())
+				} else {
+					qm.removeJob(payload["run_id"])
+				}
+				report.Status = "failed"
+				report.Error = fmt.Sprintf("Job %s on node %s timed out", report.RunID, report.Node)
+				report.SendReport()
+			}
+			logger.Debugf("time to send the wait")
+			waitch <- struct{}{}
+			waitch <- struct{}{}
+			<-outch
+			<-errch
+		case "cancel":
+			if p, ok := cmdKill[payload["run_id"]]; ok {
+				logger.Debugf("Sending notice to kill job %s", payload["run_id"])
+				p <- struct{}{}
+				return
+			}
+			logger.Debugf("Cancelling job %s failed, because the job was no longer running")
+		default:
+			logger.Warningf("Unknown action %s", action)
+			return
+		}
+	default:
+		if _, ok := eName.(string); ok {
+			logger.Debugf("Didn't know what to do with %s", eName.(string))
+		} else {
+			logger.Debugf("Got an event we didn't know what to do with")
+		}
+	}
 }
