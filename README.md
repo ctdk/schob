@@ -11,8 +11,8 @@ Running schob requires a goiardi server (both to send jobs to the schob client,
 and for the schob client to send reports to) and serf running with the goiardi
 server and on every client node that will run shovey jobs.
 
-The `knife-shove` plugin from https://github.com/ctdk/knife-shove is required to
-submit and administer shovey jobs.
+The `knife-shove` plugin from https://github.com/ctdk/knife-shove or rubygems is
+required to submit and administer shovey jobs.
 
 Schob has the following golang dependencies outside of the standard library:
 go-flags, toml, logger, the go-chef chef library, serf, go-uuid, and the 
