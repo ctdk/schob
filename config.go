@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1"
+const version = "0.1.0"
 
 type conf struct {
 	DebugLevel    int    `toml:"debug-level"`
