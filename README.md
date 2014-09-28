@@ -122,8 +122,8 @@ See Also
 * goiardi (https://github.com/ctdk/goiardi)
 * knife-shove (https://github.com/ctdk/knife-shove)
 * shovey-jobs cookbook (https://github.com/ctdk/shovey-jobs)
-* Goiardi's shovey documentation (https://github.com/ctdk/goiardi/blob/serfing/README.md#shovey)
-* Shovey API documentation (https://github.com/ctdk/goiardi/blob/serfing/shovey_api.md)
+* Goiardi's shovey documentation (https://github.com/ctdk/goiardi/blob/master/README.md#shovey)
+* Shovey API documentation (https://github.com/ctdk/goiardi/blob/master/shovey_api.md)
 
 Author
 ------
