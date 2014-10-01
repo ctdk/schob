@@ -45,7 +45,7 @@ type conf struct {
 	TimeSlew      string `toml:"time-slew"`
 	TimeSlewDur   time.Duration
 	WhitelistFile string `toml:"whitelist"`
-	RunTimeout    int    `toml:"run-timeout"`
+	RunTimeout    int64  `toml:"run-timeout"`
 	SigningPubKey string `toml:"sign-pub-key"`
 	SerfAddr      string `toml:"serf-addr"`
 	PubKey        *rsa.PublicKey
@@ -63,7 +63,7 @@ type options struct {
 	KeyFileName   string `short:"k" long:"key-file" description:"Path to node client private key"`
 	TimeSlew      string `short:"m" long:"time-slew" description:"Time difference allowed between the node's clock and the time sent in the serf command from the server. Formatted like 5m, 150s, etc. Defaults to 15m."`
 	WhitelistFile string `short:"w" long:"whitelist" description:"Path to JSON file containing whitelisted commands"`
-	RunTimeout    int    `short:"t" long:"run-timeout" description:"The time, in minutes, to wait before stopping a job. Separate from the timeout set from the server, this is a fallback. Defaults to 45 minutes."`
+	RunTimeout    int64  `short:"t" long:"run-timeout" description:"The time, in minutes, to wait before stopping a job. Separate from the timeout set from the server, this is a fallback. Defaults to 45 minutes."`
 	SigningPubKey string `short:"p" long:"sign-pub-key" description:"Path to public key used to verify signed requests from the server."`
 	SerfAddr      string `long:"serf-addr" description:"IP anddress and port to use for RPC communication with the serf agent. Defaults to 127.0.0.1:7373."`
 	QueueSaveFile string `short:"q" long:"queue-save-file" description:"File to save running job status to recover jobs that didn't finish if schob is suddenly shut down without a chance to clean up."`
@@ -178,7 +178,7 @@ func parseConfig() (*conf, error) {
 		config.SigningPubKey = opts.SigningPubKey
 	}
 	if config.RunTimeout == 0 {
-		config.RunTimeout = 45 * int(time.Second)
+		config.RunTimeout = 45 * int64(time.Second)
 	}
 
 	if opts.QueueSaveFile != "" {
