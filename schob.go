@@ -25,7 +25,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"github.com/ctdk/goas/v2/logger"
+	"github.com/tideland/golib/logger"
 	"github.com/ctdk/schob/shoveyreport"
 	"github.com/go-chef/chef"
 	serfclient "github.com/hashicorp/serf/client"

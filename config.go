@@ -22,7 +22,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/BurntSushi/toml"
-	"github.com/ctdk/goas/v2/logger"
+	"github.com/tideland/golib/logger"
 	"github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"log"
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0-alpha"
 
 type conf struct {
 	DebugLevel    int    `toml:"debug-level"`
