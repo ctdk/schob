@@ -19,7 +19,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"github.com/ctdk/goiardi/chefcrypto"
+	"github.com/ctdk/chefcrypto"
 	"testing"
 	"time"
 )
