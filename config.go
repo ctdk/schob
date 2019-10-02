@@ -40,6 +40,7 @@ type conf struct {
 	SysLog        bool   `toml:"syslog"`
 	Endpoint      string `toml:"endpoint"`
 	ClientName    string `toml:"clientname"`
+	Organization  string `toml:"organization"`
 	KeyFileName   string `toml:"key-file"`
 	Key           string
 	TimeSlew      string `toml:"time-slew"`
@@ -60,6 +61,7 @@ type options struct {
 	SysLog        bool   `short:"s" long:"syslog" description:"Use syslog for logging. Incompatible with -L/--log-file."`
 	Endpoint      string `short:"e" long:"endpoint" description:"Server endpoint"`
 	ClientName    string `short:"n" long:"node-name" description:"This node's name"`
+	Organization  string `short:"o" long:"organization" description:"The organization this node belongs to."`
 	KeyFileName   string `short:"k" long:"key-file" description:"Path to node client private key"`
 	TimeSlew      string `short:"m" long:"time-slew" description:"Time difference allowed between the node's clock and the time sent in the serf command from the server. Formatted like 5m, 150s, etc. Defaults to 15m."`
 	WhitelistFile string `short:"w" long:"whitelist" description:"Path to JSON file containing whitelisted commands"`
