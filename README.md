@@ -57,6 +57,7 @@ by hand. If you already have a binary you can skip to number 2.
                          -L/--log-file.
   -e, --endpoint=        Server endpoint
   -n, --node-name=       This node's name
+  -o, --organization=    The organization this node belongs to. 
   -k, --key-file=        Path to node client private key
   -m, --time-slew=       Time difference allowed between the node's clock and
                          the time sent in the serf command from the server.
@@ -133,7 +134,7 @@ Jeremy Bingham (<jbingham@gmail.com>)
 Copyright
 ---------
 
-Copyright 2014, Jeremy Bingham
+Copyright 2014-2019, Jeremy Bingham
 
 License
 -------
