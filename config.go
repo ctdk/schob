@@ -52,6 +52,7 @@ type conf struct {
 	SerfAddr      string `toml:"serf-addr"`
 	PubKey        *rsa.PublicKey
 	QueueSaveFile string `toml:"queue-save-file"`
+	OrgNodeName   string
 }
 
 type options struct {
@@ -193,13 +194,15 @@ func parseConfig() (*conf, error) {
 	}
 
 	if config.Organization == "" {
-
+		return nil, errors.New("No organization name given!")
 	}
 
 	if config.KeyFileName == "" {
 		err = errors.New("no private key file for node client given")
 		return nil, err
 	}
+
+	config.OrgNodeName = strings.Join([]string{config.Organization, config.ClientName}, "-")
 
 	fp, err := os.Open(config.KeyFileName)
 	if err != nil {
