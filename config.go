@@ -20,6 +20,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"github.com/tideland/golib/logger"
@@ -121,7 +122,7 @@ func parseConfig() (*conf, error) {
 	}
 	if config.LogFile != "" {
 		if config.SysLog {
-			err = fmt.Errorf("Sorry, but you can't specify both --syslog and --log-file.")
+			err = errors.New("Sorry, but you can't specify both --syslog and --log-file.")
 			return nil, err
 		}
 		lfp, err := os.Create(config.LogFile)
@@ -187,8 +188,16 @@ func parseConfig() (*conf, error) {
 		config.QueueSaveFile = opts.QueueSaveFile
 	}
 
+	if opts.Organization != "" {
+		config.Organization = opts.Organization
+	}
+
+	if config.Organization == "" {
+
+	}
+
 	if config.KeyFileName == "" {
-		err = fmt.Errorf("no private key file for node client given")
+		err = errors.New("no private key file for node client given")
 		return nil, err
 	}
 
@@ -203,7 +212,7 @@ func parseConfig() (*conf, error) {
 	config.Key = string(keyData)
 
 	if config.SigningPubKey == "" {
-		err = fmt.Errorf("No public key for signing shovey requests given")
+		err = errors.New("No public key for signing shovey requests given")
 		return nil, err
 	}
 	pfp, err := os.Open(config.SigningPubKey)
@@ -216,7 +225,7 @@ func parseConfig() (*conf, error) {
 	}
 	pubBlock, _ := pem.Decode(pub)
 	if pubBlock == nil {
-		err = fmt.Errorf("Invalid block size for public key for shovey")
+		err = errors.New("Invalid block size for public key for shovey")
 		return nil, err
 	}
 	pubKey, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
