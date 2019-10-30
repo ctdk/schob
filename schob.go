@@ -78,7 +78,7 @@ func main() {
 		logger.Criticalf(err.Error())
 		os.Exit(1)
 	}
-	err = serfer.UserEvent("goiardi-join", []byte(config.ClientName), true)
+	err = serfer.UserEvent("goiardi-join", []byte(config.OrgNodeName), true)
 	if err != nil {
 		logger.Criticalf(err.Error())
 		os.Exit(1)
@@ -102,7 +102,7 @@ func main() {
 	handleSignals(qm, config, chefClient, serfer, whitelist)
 
 	// start the heartbeat messages
-	go heartbeat(config.ClientName)
+	go heartbeat(config.OrgNodeName)
 
 	// watch for events and queries
 	streamCh := make(chan map[string]interface{}, 10)

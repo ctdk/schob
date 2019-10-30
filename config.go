@@ -202,7 +202,7 @@ func parseConfig() (*conf, error) {
 		return nil, err
 	}
 
-	config.OrgNodeName = strings.Join([]string{config.Organization, config.ClientName}, "-")
+	config.OrgNodeName = strings.Join([]string{config.Organization, config.ClientName}, ":")
 
 	fp, err := os.Open(config.KeyFileName)
 	if err != nil {
