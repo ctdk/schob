@@ -21,9 +21,12 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/x509"
+	"encoding/pem"
 	"encoding/base64"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/tideland/golib/logger"
 	"github.com/ctdk/schob/shoveyreport"
@@ -32,6 +35,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -59,6 +63,10 @@ type wl struct {
 	sync.RWMutex
 }
 
+type PubKeyReq struct {
+	PublicKey string `json:"public_key"`
+}
+
 func main() {
 	config, err := parseConfig()
 	if err != nil {
@@ -72,6 +80,41 @@ func main() {
 		log.Println(err.Error())
 		os.Exit(1)
 	}
+
+	// BEGIN SIGNING KEY JUNK
+
+	// get the signing key here, now that we have the chefClient. TODO: I
+	// think the chef pkg needs updating.
+	pkr := new(PubKeyReq)
+	req, err := chefClient.NewRequest(http.MethodGet, "shovey/key", nil)
+	if err != nil {
+		logger.Fatalf(err.Error())
+	}
+
+	resp, err := chefClient.Do(req, &pkr)
+	if err != nil {
+		logger.Fatalf(err.Error())
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("Signing Key request status was %d: returned %s, and %v in the response.", resp.StatusCode, resp.Status, pkr)
+		logger.Fatalf(err.Error())
+	}
+
+	pubBlock, _ := pem.Decode([]byte(pkr.PublicKey))
+	if pubBlock == nil {
+		err = errors.New("Invalid block size for public key for shovey")
+		logger.Fatalf(err.Error())
+	}
+
+	pubKey, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
+	if err != nil {
+		logger.Fatalf(err.Error())
+	}
+
+	config.PubKey = pubKey.(*rsa.PublicKey)
+
+	// END SIGNING KEY JUNK
 
 	serfer, err = serfclient.NewRPCClient(config.SerfAddr)
 	if err != nil {

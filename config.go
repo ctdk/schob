@@ -18,8 +18,6 @@ package main
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"github.com/BurntSushi/toml"
@@ -68,7 +66,7 @@ type options struct {
 	TimeSlew      string `short:"m" long:"time-slew" description:"Time difference allowed between the node's clock and the time sent in the serf command from the server. Formatted like 5m, 150s, etc. Defaults to 15m."`
 	WhitelistFile string `short:"w" long:"whitelist" description:"Path to JSON file containing whitelisted commands"`
 	RunTimeout    int64  `short:"t" long:"run-timeout" description:"The time, in minutes, to wait before stopping a job. Separate from the timeout set from the server, this is a fallback. Defaults to 45 minutes."`
-	SigningPubKey string `short:"p" long:"sign-pub-key" description:"Path to public key used to verify signed requests from the server."`
+	SigningPubKey string `short:"p" long:"sign-pub-key" description:"No longer used (and you shouldn't see this)."`
 	SerfAddr      string `long:"serf-addr" description:"IP anddress and port to use for RPC communication with the serf agent. Defaults to 127.0.0.1:7373."`
 	QueueSaveFile string `short:"q" long:"queue-save-file" description:"File to save running job status to recover jobs that didn't finish if schob is suddenly shut down without a chance to clean up."`
 }
@@ -214,28 +212,12 @@ func parseConfig() (*conf, error) {
 	}
 	config.Key = string(keyData)
 
-	if config.SigningPubKey == "" {
-		err = errors.New("No public key for signing shovey requests given")
-		return nil, err
+	if config.SigningPubKey != "" {
+		logger.Warningf("schob no longer uses the -p/--sign-pub-key argument to define the path to the shovey signing key. Instead, schob retrieves the signing key for the organization directly from the server. Ignoring this setting.")
 	}
-	pfp, err := os.Open(config.SigningPubKey)
-	if err != nil {
-		return nil, err
-	}
-	pub, err := ioutil.ReadAll(pfp)
-	if err != nil {
-		return nil, err
-	}
-	pubBlock, _ := pem.Decode(pub)
-	if pubBlock == nil {
-		err = errors.New("Invalid block size for public key for shovey")
-		return nil, err
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	config.PubKey = pubKey.(*rsa.PublicKey)
 
+	// signing key is set up in schob.go now -- it requires the chef client
+	// to be present so it can retrieve the signing key from the server.
+	
 	return config, nil
 }
