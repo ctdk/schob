@@ -471,7 +471,7 @@ Loop:
 			break Loop
 		case <-time.After(timeout * time.Second):
 			<-holdch
-			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
+			logger.Infof("Reached timeout reading %s for %s on node %s, at seq %d", outputReporter.OutputType, outputReporter.RunID, outputReporter.Node, outputReporter.Seq)
 			err := outputReporter.SendReport(reader.String(), true)
 			holdch <- struct{}{}
 			if err != nil {
@@ -727,7 +727,7 @@ func streamProcess(e map[string]interface{}, qm *queueManage, cmdKill map[string
 				p <- struct{}{}
 				return
 			}
-			logger.Debugf("Cancelling job %s failed, because the job was no longer running")
+			logger.Debugf("Cancelling job %s failed, because the job was no longer running", payload["run_id"])
 		default:
 			logger.Warningf("Unknown action %s", action)
 			return
