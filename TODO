@@ -1,3 +1,3 @@
 * get up to date with goiardi-1.0.0 (duh)
-* vendor the dependencies. Try and do so with the currently recommended best
-  practices (whatever that is exactly).
+* get up and going with go modules in here
+* update the README and doc.go
