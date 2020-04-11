@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Jeremy Bingham (<jbingham@gmail.com>)
+ * Copyright (c) 2014-2020, Jeremy Bingham (<jeremy@goiardi.gl>)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pborman/go-uuid"
+	"github.com/pborman/uuid"
 	"github.com/tideland/golib/logger"
 	"github.com/go-chef/chef"
 	"net/http"

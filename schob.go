@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Jeremy Bingham (<jbingham@gmail.com>)
+ * Copyright (c) 2014-2020, Jeremy Bingham (<jeremy@goiardi.gl>)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -145,7 +145,7 @@ func main() {
 	handleSignals(qm, config, chefClient, serfer, whitelist)
 
 	// start the heartbeat messages
-	go heartbeat(config.OrgNodeName)
+	go heartbeat(config.Organization, config.ClientName)
 
 	// watch for events and queries
 	streamCh := make(chan map[string]interface{}, 10)
@@ -165,10 +165,10 @@ func main() {
 	}
 }
 
-func heartbeat(clientName string) {
+func heartbeat(orgName string, clientName string) {
 	logger.Debugf("In heartbeat")
 	ticker := time.NewTicker(time.Second * time.Duration(30))
-	payload := map[string]string{"node": clientName, "status": "up"}
+	payload := map[string]string{"node": clientName, "organization": orgName, "status": "up"}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		panic(err)
@@ -732,6 +732,10 @@ func streamProcess(e map[string]interface{}, qm *queueManage, cmdKill map[string
 			logger.Warningf("Unknown action %s", action)
 			return
 		}
+	// Ignore 'goiardi-join' and 'node_status' actions. They are not
+	// relevant for schob.
+	case "goiardi-join", "node_status":
+		logger.Debugf("received a '%v' event, ignoring.", eName)
 	default:
 		if _, ok := eName.(string); ok {
 			logger.Debugf("Didn't know what to do with %s", eName.(string))
